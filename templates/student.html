@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Отметка на лекции</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
+  <main class="w-full max-w-md bg-white rounded-2xl shadow-lg p-6">
+    <h1 class="text-2xl font-bold text-slate-800 mb-1">Отметка на лекции</h1>
+    <p class="text-slate-500 mb-6">Введите данные и код с экрана аудитории.</p>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1" for="name">ФИО</label>
+        <input id="name" type="text" autocomplete="name" placeholder="Иванов Иван Иванович"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1" for="group">Группа</label>
+        <input id="group" type="text" placeholder="ИС-21"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1" for="code">Код с экрана</label>
+        <input id="code" type="text" inputmode="numeric" pattern="\d{4}" maxlength="4" placeholder="0000"
+               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-3xl text-center font-mono tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+
+      <button id="send"
+              class="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-lg font-semibold py-3 transition">
+        Отметиться
+      </button>
+
+      <div id="msg" class="hidden rounded-xl px-4 py-3 text-center font-medium"></div>
+    </div>
+  </main>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  // Подставляем ранее введённые ФИО и группу
+  try {
+    $('name').value = localStorage.getItem('att_name') || '';
+    $('group').value = localStorage.getItem('att_group') || '';
+  } catch (e) {}
+
+  // Идентификатор устройства (localStorage + cookie)
+  function getDeviceId() {
+    let id = '';
+    try { id = localStorage.getItem('att_device') || ''; } catch (e) {}
+    if (!id) {
+      const m = document.cookie.match(/(?:^|; )device_id=([^;]+)/);
+      if (m) id = m[1];
+    }
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID()
+            : Array.from({length: 4}, () => Math.random().toString(16).slice(2, 10)).join('-'));
+    }
+    try { localStorage.setItem('att_device', id); } catch (e) {}
+    document.cookie = 'device_id=' + id + '; max-age=31536000; path=/; samesite=lax';
+    return id;
+  }
+  const DEVICE_ID = getDeviceId();
+
+  function lock() {
+    ['name', 'group', 'code', 'send'].forEach(i => $(i).disabled = true);
+  }
+
+  $('code').addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+  });
+
+  function show(text, ok) {
+    const m = $('msg');
+    m.textContent = text;
+    m.className = 'rounded-xl px-4 py-3 text-center font-medium ' +
+      (ok ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800');
+  }
+
+  async function send() {
+    const body = {
+      full_name: $('name').value,
+      group: $('group').value,
+      code: $('code').value,
+      device_id: DEVICE_ID,
+    };
+    $('send').disabled = true;
+    try {
+      const res = await fetch('/api/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.status === 422) {
+        show('Проверьте, что все поля заполнены.', false);
+      } else {
+        show(data.message, data.ok);
+        if (data.locked) lock();
+        if (data.ok) {
+          try {
+            localStorage.setItem('att_name', body.full_name);
+            localStorage.setItem('att_group', body.group);
+          } catch (e) {}
+          $('code').value = '';
+        }
+      }
+    } catch (e) {
+      show('Нет связи с сервером. Попробуйте ещё раз.', false);
+    } finally {
+      if ($('code').disabled === false) $('send').disabled = false;
+    }
+  }
+
+  $('send').onclick = send;
+  $('code').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+</script>
+</body>
+</html>

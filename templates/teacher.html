@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Преподаватель — отметка студентов</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div class="max-w-7xl mx-auto p-6 grid gap-6 lg:grid-cols-2">
+
+    <!-- Код -->
+    <section class="bg-slate-800 rounded-3xl p-8 flex flex-col items-center justify-center text-center">
+      <p class="text-slate-400 text-lg mb-2">Код для отметки</p>
+      <div id="code" class="font-mono font-bold tracking-[0.25em] text-[9rem] md:text-[12rem] leading-none text-emerald-400 pl-[0.25em]">----</div>
+
+      <div class="w-full max-w-md mt-8">
+        <div class="h-3 bg-slate-700 rounded-full overflow-hidden">
+          <div id="bar" class="h-full bg-emerald-400 transition-[width] duration-200" style="width:100%"></div>
+        </div>
+        <p class="mt-3 text-2xl text-slate-300">Смена через <span id="timer" class="font-mono font-semibold">10</span> с</p>
+      </div>
+
+      <p class="mt-8 text-slate-400">
+        Откройте на телефоне: <span class="font-mono text-slate-200" id="studentUrl"></span>
+      </p>
+      <p id="status" class="mt-2 text-sm text-amber-400">Подключение…</p>
+    </section>
+
+    <!-- Список -->
+    <section class="bg-slate-800 rounded-3xl p-6 flex flex-col max-h-[calc(100vh-3rem)]">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-semibold">Отметились: <span id="count" class="text-emerald-400">0</span></h2>
+        <button id="reset" class="text-sm px-3 py-2 rounded-lg bg-slate-700 hover:bg-red-600 transition">Начать новую пару</button>
+      </div>
+      <p id="empty" class="text-slate-500 py-10 text-center">Пока никто не отметился</p>
+      <ul id="list" class="overflow-y-auto divide-y divide-slate-700"></ul>
+    </section>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let nextChange = 0, stepSeconds = 10, offset = 0, ws;
+
+  $('studentUrl').textContent = location.origin + '/student';
+
+  function addRow(a, prepend = true) {
+    const li = document.createElement('li');
+    li.className = 'py-3 flex items-center justify-between gap-4';
+    const left = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'text-lg font-medium';
+    name.textContent = a.name;            // textContent — защита от XSS
+    const group = document.createElement('div');
+    group.className = 'text-sm text-slate-400';
+    group.textContent = 'Группа ' + a.group;
+    left.append(name, group);
+    const time = document.createElement('div');
+    time.className = 'font-mono text-slate-300';
+    time.textContent = a.time;
+    li.append(left, time);
+    prepend ? $('list').prepend(li) : $('list').append(li);
+  }
+
+  function renderList(items) {
+    $('list').innerHTML = '';
+    items.forEach(a => addRow(a));        // новые сверху
+    updateCount(items.length);
+  }
+
+  function updateCount(n) {
+    $('count').textContent = n;
+    $('empty').style.display = n ? 'none' : 'block';
+  }
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws/teacher`);
+    ws.onopen = () => { $('status').textContent = 'Онлайн'; $('status').className = 'mt-2 text-sm text-emerald-400'; };
+    ws.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'state') {
+        $('code').textContent = msg.code;
+        stepSeconds = msg.step_seconds;
+        nextChange = msg.next_change_at;
+        offset = msg.server_now - Date.now() / 1000;
+        renderList(msg.attendees);
+      } else if (msg.type === 'attendee') {
+        addRow(msg.attendee);
+        updateCount(msg.total);
+      }
+    };
+    ws.onclose = () => {
+      $('status').textContent = 'Нет связи, переподключаюсь…';
+      $('status').className = 'mt-2 text-sm text-amber-400';
+      setTimeout(connect, 1500);
+    };
+  }
+
+  setInterval(() => {
+    if (!nextChange) return;
+    const left = Math.max(0, nextChange - (Date.now() / 1000 + offset));
+    $('timer').textContent = Math.ceil(left);
+    $('bar').style.width = (left / stepSeconds * 100) + '%';
+  }, 200);
+
+  setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 25000);
+
+  $('reset').onclick = async () => {
+    if (confirm('Очистить список отметившихся и начать новую пару?')) {
+      await fetch('/api/reset', { method: 'POST' });
+    }
+  };
+
+  connect();
+</script>
+</body>
+</html>
